@@ -321,22 +321,65 @@ else:
     auto_orbit = st.checkbox("Auto-orbit (fly-through)", value=False)
 
     viewer_html = f"""
-<div id="dw-viewer" style="width:100%;height:520px;background:#111;"></div>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-<script>
-(function() {{
-  const points = {points_json};
-  const container = document.getElementById('dw-viewer');
+<div id="dw-viewer" style="width:100%;height:520px;background:#111;position:relative;"></div>
+<div id="dw-viewer-status" style="position:absolute;top:8px;left:8px;color:#f66;
+     font-family:monospace;font-size:12px;white-space:pre-wrap;z-index:2;"></div>
+<script type="importmap">
+{{
+  "imports": {{
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }}
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import {{ OrbitControls }} from "three/addons/controls/OrbitControls.js";
+
+const statusEl = document.getElementById("dw-viewer-status");
+function reportError(label, err) {{
+  console.error("[DepthWizard viewer]", label, err);
+  statusEl.textContent = "Viewer error -- " + label + ": " + (err && err.message ? err.message : err);
+}}
+
+try {{
+  const rawPoints = {points_json};
+  const container = document.getElementById("dw-viewer");
+
+  // Diagnostic: confirm the container has real layout dimensions before we
+  // size the renderer off of it (cause #5 in the debugging checklist).
+  console.log("[DepthWizard viewer] container size", container.clientWidth, container.clientHeight);
+  const width = container.clientWidth || 800;
+  const height = 520;
+
+  // Filter any non-finite point (cause #7) instead of silently rendering
+  // garbage or letting it poison the bounding-box calculation below.
+  const points = rawPoints.filter(p =>
+    p.every(v => Number.isFinite(v))
+  );
+  console.log("[DepthWizard viewer] point_count raw=", rawPoints.length, "finite=", points.length);
+  if (points.length === 0) {{
+    throw new Error("no finite points in scene JSON (point_count=" + rawPoints.length + ")");
+  }}
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x111111);
-  const camera = new THREE.PerspectiveCamera(60, container.clientWidth / 520, 0.01, 1000);
-  const renderer = new THREE.WebGLRenderer({{ antialias: true }});
-  renderer.setSize(container.clientWidth, 520);
+  const camera = new THREE.PerspectiveCamera(60, width / height, 0.001, 10000);
+
+  let renderer;
+  try {{
+    renderer = new THREE.WebGLRenderer({{ antialias: true }});
+  }} catch (err) {{
+    throw new Error("WebGL initialization failed (cause #10): " + err.message);
+  }}
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(width, height);
   container.appendChild(renderer.domElement);
 
   const positions = new Float32Array(points.length * 3);
   const colors = new Float32Array(points.length * 3);
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < points.length; i++) {{
     const p = points[i];
     positions[i * 3] = p[0];
@@ -345,22 +388,36 @@ else:
     colors[i * 3] = p[3] / 255;
     colors[i * 3 + 1] = p[4] / 255;
     colors[i * 3 + 2] = p[5] / 255;
+    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+    minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+    minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
   }}
+
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geometry.computeBoundingSphere();
-  const material = new THREE.PointsMaterial({{ size: 0.01, vertexColors: true }});
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+  // Explicit bounding-box fit (do not assume the point cloud is centered on
+  // the origin -- cause #6/#9). This is the actual center/extent of the data.
+  const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+  const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+  console.log("[DepthWizard viewer] bbox", {{ minX, maxX, minY, maxY, minZ, maxZ }}, "center", center, "extent", extent);
+
+  // Point size scaled to the actual scene extent (cause #8) instead of a
+  // fixed constant that could be invisible or enormous depending on scale.
+  const material = new THREE.PointsMaterial({{ size: Math.max(extent / 150, 0.0005), vertexColors: true }});
   const cloud = new THREE.Points(geometry, material);
   scene.add(cloud);
 
-  const sphere = geometry.boundingSphere;
-  const dist = (sphere ? sphere.radius : 1) * 2.5 + 0.01;
-  camera.position.set(dist, dist, dist);
-  camera.lookAt(0, 0, 0);
+  const dist = extent * 1.8 + 0.01;
+  camera.position.set(center.x + dist, center.y + dist, center.z + dist);
+  camera.lookAt(center);
+  console.log("[DepthWizard viewer] camera position", camera.position, "distance", dist);
 
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.copy(center);
   controls.enableDamping = true;
+  controls.update();
 
   const autoOrbit = {str(auto_orbit).lower()};
   let angle = 0;
@@ -368,15 +425,18 @@ else:
     requestAnimationFrame(animate);
     if (autoOrbit) {{
       angle += 0.004;
-      camera.position.x = Math.cos(angle) * dist;
-      camera.position.z = Math.sin(angle) * dist;
-      camera.lookAt(0, 0, 0);
+      camera.position.x = center.x + Math.cos(angle) * dist;
+      camera.position.z = center.z + Math.sin(angle) * dist;
+      camera.lookAt(center);
     }}
     controls.update();
     renderer.render(scene, camera);
   }}
   animate();
-}})();
+  console.log("[DepthWizard viewer] render loop started, points rendered =", points.length);
+}} catch (err) {{
+  reportError("setup", err);
+}}
 </script>
 """
     st.components.v1.html(viewer_html, height=540, scrolling=False)
