@@ -322,8 +322,10 @@ else:
 
     viewer_html = f"""
 <div id="dw-viewer" style="width:100%;height:520px;background:#111;position:relative;"></div>
-<div id="dw-viewer-status" style="position:absolute;top:8px;left:8px;color:#f66;
-     font-family:monospace;font-size:12px;white-space:pre-wrap;z-index:2;"></div>
+<pre id="dw-diag-panel" style="position:absolute;top:8px;left:8px;color:#0f0;background:rgba(0,0,0,0.55);
+     font-family:monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;z-index:2;margin:0;
+     padding:6px 8px;pointer-events:none;max-width:70%;">[DepthWizard 3D Diagnostics]
+Three.js: PENDING</pre>
 <script type="importmap">
 {{
   "imports": {{
@@ -333,115 +335,190 @@ else:
 }}
 </script>
 <script type="module">
-import * as THREE from "three";
-import {{ OrbitControls }} from "three/addons/controls/OrbitControls.js";
-
-const statusEl = document.getElementById("dw-viewer-status");
-function reportError(label, err) {{
-  console.error("[DepthWizard viewer]", label, err);
-  statusEl.textContent = "Viewer error -- " + label + ": " + (err && err.message ? err.message : err);
+// IMPORTANT (found by live debugging on the actual deployment, not assumed):
+// a plain, untyped <script> tag injected via Streamlit's components.v1.html
+// mechanism here does NOT execute -- only type="module" and type="importmap"
+// scripts do. Everything, including the diagnostics-panel scaffolding that
+// would normally live in a separate classic <script>, has to live in this
+// one module script, or it silently never runs.
+window.dwDiag = {{
+  three: "PENDING", orbit: "PENDING", sceneData: "PENDING",
+  points: 0, finitePoints: 0, bbox: "PENDING", canvas: "PENDING",
+  webgl: "PENDING", renderer: "PENDING", renderLoop: "PENDING", error: ""
+}};
+window.dwModuleRan = true;
+function dwRenderPanel() {{
+  var d = window.dwDiag;
+  var lines = [
+    "[DepthWizard 3D Diagnostics]",
+    "Three.js: " + d.three,
+    "OrbitControls: " + d.orbit,
+    "Scene data: " + d.sceneData,
+    "Points: " + d.points,
+    "Finite points: " + d.finitePoints,
+    "Bounding box: " + d.bbox,
+    "Canvas: " + d.canvas,
+    "WebGL: " + d.webgl,
+    "Renderer: " + d.renderer,
+    "Render loop: " + d.renderLoop,
+  ];
+  if (d.error) lines.push("ERROR: " + d.error);
+  var el = document.getElementById("dw-diag-panel");
+  if (el) el.textContent = lines.join("\\n");
 }}
+dwRenderPanel();
+window.addEventListener("error", function (e) {{
+  window.dwDiag.error = (window.dwDiag.error ? window.dwDiag.error + " | " : "") + "window error: " + e.message;
+  dwRenderPanel();
+}});
+window.addEventListener("unhandledrejection", function (e) {{
+  var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+  window.dwDiag.error = (window.dwDiag.error ? window.dwDiag.error + " | " : "") + "unhandled rejection: " + msg;
+  dwRenderPanel();
+}});
 
-try {{
+(async () => {{
   const rawPoints = {points_json};
   const container = document.getElementById("dw-viewer");
-
-  // Diagnostic: confirm the container has real layout dimensions before we
-  // size the renderer off of it (cause #5 in the debugging checklist).
-  console.log("[DepthWizard viewer] container size", container.clientWidth, container.clientHeight);
-  const width = container.clientWidth || 800;
-  const height = 520;
-
-  // Filter any non-finite point (cause #7) instead of silently rendering
-  // garbage or letting it poison the bounding-box calculation below.
-  const points = rawPoints.filter(p =>
-    p.every(v => Number.isFinite(v))
-  );
-  console.log("[DepthWizard viewer] point_count raw=", rawPoints.length, "finite=", points.length);
-  if (points.length === 0) {{
-    throw new Error("no finite points in scene JSON (point_count=" + rawPoints.length + ")");
-  }}
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111111);
-  const camera = new THREE.PerspectiveCamera(60, width / height, 0.001, 10000);
-
-  let renderer;
   try {{
-    renderer = new THREE.WebGLRenderer({{ antialias: true }});
-  }} catch (err) {{
-    throw new Error("WebGL initialization failed (cause #10): " + err.message);
-  }}
-  renderer.setPixelRatio(window.devicePixelRatio || 1);
-  renderer.setSize(width, height);
-  container.appendChild(renderer.domElement);
-
-  const positions = new Float32Array(points.length * 3);
-  const colors = new Float32Array(points.length * 3);
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  for (let i = 0; i < points.length; i++) {{
-    const p = points[i];
-    positions[i * 3] = p[0];
-    positions[i * 3 + 1] = p[1];
-    positions[i * 3 + 2] = p[2];
-    colors[i * 3] = p[3] / 255;
-    colors[i * 3 + 1] = p[4] / 255;
-    colors[i * 3 + 2] = p[5] / 255;
-    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
-    minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
-    minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
-  }}
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-
-  // Explicit bounding-box fit (do not assume the point cloud is centered on
-  // the origin -- cause #6/#9). This is the actual center/extent of the data.
-  const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
-  const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
-  console.log("[DepthWizard viewer] bbox", {{ minX, maxX, minY, maxY, minZ, maxZ }}, "center", center, "extent", extent);
-
-  // Point size scaled to the actual scene extent (cause #8) instead of a
-  // fixed constant that could be invisible or enormous depending on scale.
-  const material = new THREE.PointsMaterial({{ size: Math.max(extent / 150, 0.0005), vertexColors: true }});
-  const cloud = new THREE.Points(geometry, material);
-  scene.add(cloud);
-
-  const dist = extent * 1.8 + 0.01;
-  camera.position.set(center.x + dist, center.y + dist, center.z + dist);
-  camera.lookAt(center);
-  console.log("[DepthWizard viewer] camera position", camera.position, "distance", dist);
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.copy(center);
-  controls.enableDamping = true;
-  controls.update();
-
-  const autoOrbit = {str(auto_orbit).lower()};
-  let angle = 0;
-  function animate() {{
-    requestAnimationFrame(animate);
-    if (autoOrbit) {{
-      angle += 0.004;
-      camera.position.x = center.x + Math.cos(angle) * dist;
-      camera.position.z = center.z + Math.sin(angle) * dist;
-      camera.lookAt(center);
+    let THREE;
+    try {{
+      THREE = await import("three");
+      window.dwDiag.three = "LOADED";
+    }} catch (err) {{
+      window.dwDiag.three = "FAILED: " + err.message;
+      dwRenderPanel();
+      return;
     }}
+    dwRenderPanel();
+
+    let OrbitControls;
+    try {{
+      const orbitModule = await import("three/addons/controls/OrbitControls.js");
+      OrbitControls = orbitModule.OrbitControls;
+      window.dwDiag.orbit = "LOADED";
+    }} catch (err) {{
+      window.dwDiag.orbit = "FAILED: " + err.message;
+    }}
+    dwRenderPanel();
+
+    const points = rawPoints.filter(p => p.every(v => Number.isFinite(v)));
+    window.dwDiag.sceneData = "INLINED, parsed OK";
+    window.dwDiag.points = rawPoints.length;
+    window.dwDiag.finitePoints = points.length;
+    dwRenderPanel();
+    if (points.length === 0) {{
+      throw new Error("no finite points in scene JSON (point_count=" + rawPoints.length + ")");
+    }}
+
+    const width = container.clientWidth || 800;
+    const height = 520;
+    window.dwDiag.canvas = width + "x" + height;
+    dwRenderPanel();
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.001, 10000);
+
+    let renderer;
+    try {{
+      renderer = new THREE.WebGLRenderer({{ antialias: true }});
+      window.dwDiag.webgl = "AVAILABLE";
+    }} catch (err) {{
+      window.dwDiag.webgl = "FAILED: " + err.message;
+      window.dwDiag.renderer = "FAILED";
+      dwRenderPanel();
+      return;
+    }}
+    const pixelRatio = window.devicePixelRatio || 1;
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(width, height);
+    container.appendChild(renderer.domElement);
+    window.dwDiag.renderer = "INITIALIZED";
+    dwRenderPanel();
+
+    let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+    const positions = new Float32Array(points.length * 3);
+    const colors = new Float32Array(points.length * 3);
+    for (let i = 0; i < points.length; i++) {{
+      const p = points[i];
+      positions[i*3]=p[0]; positions[i*3+1]=p[1]; positions[i*3+2]=p[2];
+      colors[i*3]=p[3]/255; colors[i*3+1]=p[4]/255; colors[i*3+2]=p[5]/255;
+      minX=Math.min(minX,p[0]); maxX=Math.max(maxX,p[0]);
+      minY=Math.min(minY,p[1]); maxY=Math.max(maxY,p[1]);
+      minZ=Math.min(minZ,p[2]); maxZ=Math.max(maxZ,p[2]);
+    }}
+    window.dwDiag.bbox = "[" + minX.toFixed(3) + "," + minY.toFixed(3) + "," + minZ.toFixed(3) + "] .. [" + maxX.toFixed(3) + "," + maxY.toFixed(3) + "," + maxZ.toFixed(3) + "]";
+    dwRenderPanel();
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+    // Confirmed by live testing: points *were* being drawn at the previous
+    // fix, but PointsMaterial's default sizeAttenuation=true sizes points in
+    // world units, which for this cloud's scale worked out to ~1-2 device
+    // pixels -- indistinguishable from "nothing rendered" at a glance.
+    // sizeAttenuation:false renders every point at a fixed, generous pixel
+    // size regardless of scene scale or camera distance.
+    const material = new THREE.PointsMaterial({{
+      size: 4 * pixelRatio, sizeAttenuation: false, vertexColors: true,
+    }});
+    scene.add(new THREE.Points(geometry, material));
+
+    // Hardcoded reference cube -- independent of the real point cloud's
+    // data/math. If this ever stops being visible while the diagnostics
+    // above all say LOADED/INITIALIZED/RUNNING, the bug is in the real
+    // point cloud's data, not in WebGL/Three.js/the canvas itself.
+    const center = new THREE.Vector3((minX+maxX)/2, (minY+maxY)/2, (minZ+maxZ)/2);
+    const extent = Math.max(maxX-minX, maxY-minY, maxZ-minZ, 1e-6);
+    const cubeSize = Math.max(extent * 0.12, 0.02);
+    const refCube = new THREE.Mesh(
+      new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize),
+      new THREE.MeshBasicMaterial({{ color: 0x00ff88, wireframe: true }}),
+    );
+    refCube.position.copy(center);
+    scene.add(refCube);
+
+    const dist = extent * 1.8 + 0.05;
+    camera.position.set(center.x + dist, center.y + dist, center.z + dist);
+    camera.lookAt(center);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(center);
+    controls.enableDamping = true;
     controls.update();
-    renderer.render(scene, camera);
+
+    const autoOrbit = {str(auto_orbit).lower()};
+    let angle = 0;
+    function animate() {{
+      requestAnimationFrame(animate);
+      refCube.rotation.x += 0.01;
+      refCube.rotation.y += 0.01;
+      if (autoOrbit) {{
+        angle += 0.004;
+        camera.position.x = center.x + Math.cos(angle) * dist;
+        camera.position.z = center.z + Math.sin(angle) * dist;
+        camera.lookAt(center);
+      }}
+      controls.update();
+      renderer.render(scene, camera);
+    }}
+    window.dwDiag.renderLoop = "RUNNING";
+    dwRenderPanel();
+    animate();
+  }} catch (err) {{
+    window.dwDiag.error = (window.dwDiag.error ? window.dwDiag.error + " | " : "") + "top-level: " + err.message;
+    dwRenderPanel();
   }}
-  animate();
-  console.log("[DepthWizard viewer] render loop started, points rendered =", points.length);
-}} catch (err) {{
-  reportError("setup", err);
-}}
+}})();
 </script>
 """
-    st.components.v1.html(viewer_html, height=540, scrolling=False)
+    st.components.v1.html(viewer_html, height=560, scrolling=True)
     st.caption(
         "Orbit / zoom / pan via mouse. \"Fly-through\" = continuous auto-orbit "
-        "around the reconstructed scene -- this is an uncalibrated preview "
-        "point cloud (calibrated=False), not surveyed 3D geometry."
+        "around the reconstructed scene. The small rotating green wireframe cube "
+        "is a fixed reference object, independent of the real data -- if it's not "
+        "visible, the problem is WebGL/canvas, not the point cloud. This is an "
+        "uncalibrated preview point cloud (calibrated=False), not surveyed 3D geometry."
     )
