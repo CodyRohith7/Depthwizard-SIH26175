@@ -1,12 +1,15 @@
-"""height module -- NOT YET IMPLEMENTED.
+"""height module.
 
-Structural placeholder created during Milestone M0 to match the approved
-architecture (Phase 0 audit, Section 8). Implementation is scoped to a
-later milestone -- see the audit's roadmap (Section 20):
-    - geometry, scale, uncertainty, height -> Milestone M2/M3
-    - evaluation                          -> Milestone M5
+Implemented (Ship-mode MVP pass): point-to-point relative elevation
+measurement only -- see measurement.relative_height_between_points and its
+docstring for exactly what is (and is not) being measured, and how a real
+meters value can be attached if an external calibration is supplied.
 
-Importing this package currently gives you nothing but this docstring on
-purpose: no placeholder function should exist that could be mistaken for a
-real implementation (scientific-safety Rule E).
+NOT implemented: automatic metric calibration (SRTM/GCP/RANSAC), area or
+volume measurement, or any per-pixel confidence/accuracy score. See the
+Phase 0 audit's roadmap (Section 20) -- automatic calibration is
+Milestone M2+ scope.
 """
+from depthwizard.height.measurement import relative_height_between_points
+
+__all__ = ["relative_height_between_points"]
