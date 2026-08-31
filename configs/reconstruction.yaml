@@ -1,0 +1,12 @@
+# Placeholder-intrinsics parameters used ONLY by the M1 sample-scene export
+# script (scripts/export_sample_scene.py) to produce a preview point cloud
+# for the frontend viewer scaffold.
+#
+# THIS IS NOT A CALIBRATED CAMERA MODEL. It must never be used to produce a
+# height, DSM, or any other measurement presented to a user. Real intrinsics
+# come from src/depthwizard/io (EXIF) or a future calibration step -- see
+# the Phase 0 audit, Section 8 (/geometry) and Section 10.
+
+placeholder_preview:
+  assumed_horizontal_fov_deg: 60.0
+  max_points: 20000

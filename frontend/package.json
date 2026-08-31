@@ -1,0 +1,9 @@
+{
+  "name": "depthwizard-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "M1 viewer scaffold. Currently a zero-build vanilla Three.js page (frontend/index.html + frontend/src/viewer.js) that loads Three.js from a CDN via an import map -- no npm install required to run it. This package.json is a placeholder for the eventual move to a bundled React + @react-three/fiber app (see README.md, 'Migrating to React') once real npm registry access is available to build and verify it.",
+  "scripts": {
+    "serve": "python3 -m http.server 8080"
+  }
+}

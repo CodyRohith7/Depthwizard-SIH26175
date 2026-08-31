@@ -1,0 +1,18 @@
+# Depth backend configuration for M1.
+#
+# `primary_backend` is what /depth attempts to load first. If it fails to
+# load (missing torch/transformers, no network to fetch weights, OOM, etc.)
+# the failure is raised as depthwizard.depth.exceptions.ModelLoadError --
+# it is never silently swallowed. Callers that want a demo-safe path must
+# explicitly pass allow_fallback=True to predict(); the fallback result is
+# always tagged status="DEMO_FALLBACK".
+
+primary_backend: depth-anything-v2-small
+huggingface_model_id: depth-anything/Depth-Anything-V2-Small-hf
+
+# Fallback (non-AI, deterministic heuristic) parameters. Used only when
+# allow_fallback=True and the real backend could not be loaded or run.
+fallback:
+  gaussian_blur_sigma: 5.0
+  min_value: 0.3
+  max_value: 1.0

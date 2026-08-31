@@ -1,0 +1,22 @@
+DEPTHWIZARD — 2.5 MINUTE EXPLAINER
+
+0:00–0:12 HOOK
+“One image. One scene. One measurement. DepthWizard turns a single optical image into depth, height and a navigable 3D environment.”
+
+0:12–0:35 PROBLEM
+“Traditional elevation products often depend on stereo, LiDAR or radar. A single image is agile, but the hard problems are scale ambiguity, remote-sensing domain gap and incomplete geometry.”
+
+0:35–1:00 ARCHITECTURE
+“DepthWizard begins with image-quality and scene understanding. A metric-capable monocular model provides a depth prior. Geometry then reasons about ground, roofs, planes and structural edges. Physical evidence anchors scale.”
+
+1:00–1:25 TRUST
+“The key difference is reliability. We don't return a naked number. We track depth reliability, scale reliability and geometric consistency. When evidence is insufficient, the system says so.”
+
+1:25–1:50 MEASURE
+“Select a building or structure. The system reconstructs its 3D points, estimates its relationship to the ground plane and returns a height with provenance and uncertainty.”
+
+1:50–2:10 FLY
+“Now the static image becomes a navigable 3D scene. Observed geometry, inferred geometry and unknown regions are kept distinct.”
+
+2:10–2:30 PROOF
+“We benchmark depth error, height error, reconstruction quality, uncertainty calibration and runtime, and use ablation studies to prove which modules matter. DepthWizard is not a depth viewer. It is a measurement pipeline from one image to a trustworthy 3D experience.”

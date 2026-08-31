@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Env / secrets
+.env
+
+# Data (large / generated -- not committed)
+data/raw/
+data/cache/
+*.tif
+*.tiff
+!data/**/*.md
+
+# Model weights / caches
+*.pt
+*.pth
+*.onnx
+*.safetensors
+.cache/
+huggingface/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
