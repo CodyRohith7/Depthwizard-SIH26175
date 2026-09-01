@@ -1,11 +1,21 @@
 """Build and export an exportable 3D scene from depth + relative elevation.
 
-Reuses the existing, honestly-labeled uncalibrated unprojection
-(depthwizard.reconstruction.placeholder_preview) as the geometry source --
-it is not replaced here, only wired into an end-to-end
-depth -> elevation -> point cloud -> file pipeline for the demo app, per
-"understand before replacing" and "do not replace working components
-without reason".
+Two scene builders live here:
+    - build_mesh_scene: the app's primary path. Wraps a canonical
+      elevation grid (reconstruction.elevation_grid) + a reconstructed
+      terrain mesh (reconstruction.mesh) into one exportable dict. This is
+      a real structured surface, not a point cloud.
+    - build_scene: the original point-cloud builder, kept for backward
+      compatibility and its existing tests -- it reuses the same
+      honestly-labeled uncalibrated unprojection
+      (depthwizard.reconstruction.placeholder_preview) it always did, and
+      is still exactly as valid an uncalibrated preview as before. The app
+      no longer calls it directly (see app/streamlit_app.py), because
+      SIH26175's scope is a structured surface reconstruction, not
+      scattered points -- but nothing about the point-cloud path was
+      broken or removed, per "do not replace working components without
+      reason": the reason here is the surface-reconstruction requirement,
+      not a defect in the point cloud itself.
 
 Every exported artifact carries the same provenance fields the rest of
 this codebase already uses (calibrated, intrinsics_source, source /
@@ -21,9 +31,40 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from depthwizard.reconstruction.placeholder_preview import unproject_placeholder
+from depthwizard.reconstruction.mesh import mesh_to_json_safe
 from depthwizard.logging_setup import get_logger
 
 log = get_logger("depthwizard.reconstruction.scene_export")
+
+
+def build_mesh_scene(
+    elevation_grid: Dict[str, Any],
+    mesh: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Combine a canonical elevation grid + reconstructed terrain mesh into
+    one exportable dict -- the canonical scene representation for both the
+    3D viewer and the "Download scene JSON" export.
+    """
+    return {
+        "kind": "terrain_mesh",
+        "mesh": mesh_to_json_safe(mesh),
+        "elevation_meta": {
+            "rows": elevation_grid["rows"],
+            "cols": elevation_grid["cols"],
+            "valid_fraction": elevation_grid["valid_fraction"],
+            "unit": elevation_grid["unit"],
+            "calibrated": elevation_grid["calibrated"],
+            "calibration_source": elevation_grid["calibration_source"],
+        },
+        "depth_source": elevation_grid["depth_source"],
+        "depth_status": elevation_grid["depth_status"],
+        "calibrated": False,
+        "intrinsics_source": mesh["intrinsics_source"],
+        "elevation_convention": (
+            "Z is a relative-elevation proxy derived from monocular relative "
+            "depth (see depthwizard.reconstruction.dsm) -- NOT metric height."
+        ),
+    }
 
 
 def build_scene(
@@ -59,7 +100,14 @@ def export_scene_json(scene: Dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(scene, fh)
-    log.info("Exported scene JSON to %s (%d points)", path, scene.get("point_count", 0))
+    if scene.get("kind") == "terrain_mesh":
+        mesh = scene.get("mesh", {})
+        log.info(
+            "Exported scene JSON to %s (mesh: %d vertices, %d triangles)",
+            path, mesh.get("vertex_count", 0), mesh.get("triangle_count", 0),
+        )
+    else:
+        log.info("Exported scene JSON to %s (%d points)", path, scene.get("point_count", 0))
     return path
 
 
