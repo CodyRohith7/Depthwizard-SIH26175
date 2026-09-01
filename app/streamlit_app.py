@@ -352,16 +352,18 @@ m2.metric("Depth model", result.source.split("/")[-1] if "/" in result.source el
 m3.metric("Input resolution", f"{result.shape[1]} x {result.shape[0]}")
 m4.metric("Processing time", f"{result.inference_time_ms:.0f} ms")
 
-sec1, sec2, sec3, sec4 = st.columns(4)
+sec1, sec2, sec3 = st.columns(3)
 sec1.caption("Georeferenced")
 sec1.write("Yes" if meta.is_georeferenced else "No")
 sec2.caption("Scene status")
 sec2.write("Ready" if scene else "Unavailable")
 sec3.caption("Point count")
 sec3.write(f"{len(scene['points'])}")
-height_result = st.session_state.height_result
-sec4.caption("Measurement calibration")
-sec4.write("Metric" if (height_result and height_result.get("calibrated")) else "Relative")
+# Measurement calibration (Metric/Relative) is NOT shown here: this section
+# runs before Measure computes it in each script pass, so reading
+# st.session_state.height_result here would always show the *previous*
+# run's value, one render behind. The Measure section below shows its own
+# calibration badge live against the value it just computed instead.
 
 with st.expander("Technical details"):
     grad_y, grad_x = np.gradient(elevation)
