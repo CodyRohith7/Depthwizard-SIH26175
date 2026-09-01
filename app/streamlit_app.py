@@ -116,6 +116,11 @@ h2, h3 { font-weight: 600 !important; }
 
 .dw-section-rule { border: none; border-top: 1px solid #1c2430; margin: 1.6rem 0 1.2rem 0; }
 
+.dw-flow { display: flex; align-items: center; gap: 10px; margin: 0.8rem 0 1.4rem 0; flex-wrap: wrap; }
+.dw-flow-step { font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 0.98rem;
+  color: #e6e9ef; padding: 5px 12px; border: 1px solid #232b38; border-radius: 4px; background: #10151d; }
+.dw-flow-arrow { color: #3ddad0; font-size: 1.1rem; }
+
 [data-testid="stFileUploaderDropzone"] { border-radius: 6px; }
 .stButton > button { border-radius: 6px; font-weight: 600; }
 [data-testid="stExpander"] { border-radius: 6px; }
@@ -193,9 +198,12 @@ with st.sidebar:
     st.subheader("Mode")
     allow_fallback = st.checkbox(
         "Allow DEMO_FALLBACK if the real model can't load",
-        value=True,
-        help="If unchecked, a real Depth Anything V2 failure is shown as an "
-             "error instead of silently substituting a non-AI heuristic.",
+        value=False,
+        help="Off by default for the competition demo, which must start in "
+             "real-model mode. Turn this on only for development, when the "
+             "real Depth Anything V2 backend may be unavailable -- a real "
+             "failure is otherwise shown as an error, never silently "
+             "substituted with a non-AI heuristic.",
     )
 
     st.subheader("Processing controls")
@@ -313,6 +321,16 @@ else:
 st.markdown(badge("Relative / Uncalibrated", "relative"), unsafe_allow_html=True)
 st.caption("Depth and elevation below are relative to this image only — not metric, not comparable across images.")
 
+st.markdown(
+    '<div class="dw-flow">'
+    '<span class="dw-flow-step">Original Image</span><span class="dw-flow-arrow">&rarr;</span>'
+    '<span class="dw-flow-step">Relative Depth</span><span class="dw-flow-arrow">&rarr;</span>'
+    '<span class="dw-flow-step">Elevation Surface</span><span class="dw-flow-arrow">&rarr;</span>'
+    '<span class="dw-flow-step">3D Reconstruction</span>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
 depth_u8 = (np.clip(result.depth, 0, 1) * 255).astype(np.uint8)
 depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_TURBO)[:, :, ::-1]
 
@@ -328,17 +346,20 @@ def _legend_strip(colormap: int, lo_label: str, hi_label: str):
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.image(image, caption="Original", use_container_width=True)
+    with st.container(border=True):
+        st.image(image, caption="Original", use_container_width=True)
 with c2:
-    st.image(depth_colored, caption=f"Relative depth ({result.status.value})", use_container_width=True)
-    strip, lo, hi = _legend_strip(cv2.COLORMAP_TURBO, "near", "far")
-    st.image(strip, use_container_width=True)
-    st.caption(f"{lo} → {hi}")
+    with st.container(border=True):
+        st.image(depth_colored, caption=f"Relative depth ({result.status.value})", use_container_width=True)
+        strip, lo, hi = _legend_strip(cv2.COLORMAP_TURBO, "near", "far")
+        st.image(strip, use_container_width=True)
+        st.caption(f"{lo} → {hi}")
 with c3:
-    st.image(elev_colored, caption="Relative elevation / pseudo-DSM", use_container_width=True)
-    strip, lo, hi = _legend_strip(cv2.COLORMAP_VIRIDIS, f"{stats['min']:.2f}", f"{stats['max']:.2f}")
-    st.image(strip, use_container_width=True)
-    st.caption(f"{lo} → {hi} (relative units)")
+    with st.container(border=True):
+        st.image(elev_colored, caption="Relative elevation / pseudo-DSM", use_container_width=True)
+        strip, lo, hi = _legend_strip(cv2.COLORMAP_VIRIDIS, f"{stats['min']:.2f}", f"{stats['max']:.2f}")
+        st.image(strip, use_container_width=True)
+        st.caption(f"{lo} → {hi} (relative units)")
 
 st.markdown('<hr class="dw-section-rule" />', unsafe_allow_html=True)
 
@@ -390,8 +411,9 @@ st.markdown('<hr class="dw-section-rule" />', unsafe_allow_html=True)
 # MEASURE -- point-to-point, mode made explicit and impossible to misread
 # ---------------------------------------------------------------------------
 st.header("Measure")
+st.caption("Relative elevation / pseudo-DSM measurement between two points -- the main demo output.")
 h, w = elevation.shape
-pc1, pc2, pc3 = st.columns(3)
+pc1, pc2 = st.columns(2)
 with pc1:
     st.caption("Point A")
     r1 = st.number_input("Row", 0, h - 1, 0, key="pt_a_row")
@@ -400,14 +422,18 @@ with pc2:
     st.caption("Point B")
     r2 = st.number_input("Row", 0, h - 1, h - 1, key="pt_b_row")
     c_2 = st.number_input("Col", 0, w - 1, w - 1, key="pt_b_col")
-with pc3:
-    st.caption("External scale (optional)")
+
+mpu = None
+with st.expander("Advanced / Experimental -- manual metric calibration"):
+    st.caption(
+        "Not part of the core demo. This pipeline never derives metric scale on its "
+        "own -- if you have an independent, trusted reference (e.g. a known building "
+        "height in this scene), you may supply it here to convert the single "
+        "measurement below into meters. Leave blank to keep the result honestly "
+        "uncalibrated, which is the default and the recommended demo state."
+    )
     meters_per_unit_raw = st.text_input(
-        "Meters per relative unit", value="", label_visibility="collapsed",
-        placeholder="e.g. 2.5",
-        help="Only fill this in if you have an independent, trusted reference "
-             "(e.g. a known building height in this scene). Leave blank to keep "
-             "the result honestly uncalibrated.",
+        "Meters per relative unit", value="", placeholder="e.g. 2.5",
     )
     try:
         mpu = float(meters_per_unit_raw) if meters_per_unit_raw.strip() else None
@@ -456,6 +482,7 @@ st.markdown('<hr class="dw-section-rule" />', unsafe_allow_html=True)
 # EXPLORE -- the Three.js scene, a first-class product surface
 # ---------------------------------------------------------------------------
 st.header("Explore in 3D")
+st.caption("The reconstructed scene, in full: drag to orbit, scroll to zoom, right-drag to pan.")
 
 points_json = json.dumps(scene["points"])
 
@@ -468,7 +495,7 @@ points_json = json.dumps(scene["points"])
 # with no interpolation makes that entire bug class impossible.
 _VIEWER_TEMPLATE = r"""
 <div id="dw-viewer-wrap" style="position:relative;width:100%;">
-  <div id="dw-viewer" style="width:100%;height:520px;background:#0a0e14;position:relative;border-radius:6px;overflow:hidden;"></div>
+  <div id="dw-viewer" style="width:100%;height:640px;background:#0a0e14;position:relative;border-radius:6px;overflow:hidden;"></div>
   <div id="dw-toolbar" style="position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:3;">
     <button id="dw-btn-fit" class="dw-tbtn" title="Fit camera to scene">Fit</button>
     <button id="dw-btn-reset" class="dw-tbtn" title="Reset to the starting view">Reset</button>
@@ -583,7 +610,7 @@ function dwHideLoading() {
     }
 
     let width = container.clientWidth || 800;
-    const height = 520;
+    const height = 640;
     window.dwDiag.canvas = width + "x" + height;
     dwRenderPanel();
 
@@ -707,7 +734,7 @@ function dwHideLoading() {
 """
 
 viewer_html = _VIEWER_TEMPLATE.replace("__DW_POINTS_JSON__", points_json)
-st.components.v1.html(viewer_html, height=560, scrolling=True)
+st.components.v1.html(viewer_html, height=680, scrolling=True)
 st.caption(
     "Drag to orbit, scroll to zoom, right-drag to pan. “Auto-Fly” is a continuous "
     "orbit around the reconstructed scene; “Fit” / “Reset” return to the starting view. "
