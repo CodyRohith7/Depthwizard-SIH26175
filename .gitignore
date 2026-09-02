@@ -30,11 +30,6 @@ data/cache/
 .cache/
 huggingface/
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-
 # OS / editor
 .DS_Store
 .vscode/

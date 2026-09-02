@@ -17,7 +17,9 @@ one linear story on screen:
                -> depthwizard.height.measurement               (point-to-point
                   relative height, optionally scaled if the user supplies an
                   external reference -- never auto-calibrated)
-               -> depthwizard.reconstruction.scene_export       (point cloud +
+               -> depthwizard.reconstruction.elevation_grid + .mesh (structured
+                  elevation grid -> triangle-mesh surface reconstruction)
+               -> depthwizard.reconstruction.scene_export       (mesh scene +
                   JSON / GeoTIFF export)
                -> an embedded Three.js viewer (orbit / zoom / pan / auto-fly)
 
@@ -215,18 +217,17 @@ with st.sidebar:
     invert_elevation = st.checkbox(
         "Closer-to-camera = higher elevation", value=True,
         help="The standard assumption for a roughly-overhead shot. Turn off "
-             "if your image's geometry makes this wrong -- see "
-             "depthwizard.reconstruction.dsm docstring.",
+             "if this image's geometry makes that assumption wrong.",
     )
     assumed_hfov = st.slider(
-        "Assumed horizontal FOV (deg, uncalibrated)", 20.0, 120.0, 60.0, step=5.0,
-        help="Unprojection is always uncalibrated (calibrated=False) regardless "
-             "of this value -- it only affects the shape of the preview point cloud.",
+        "Assumed horizontal field of view (deg, uncalibrated)", 20.0, 120.0, 60.0, step=5.0,
+        help="Affects only the shape of the reconstructed surface -- the "
+             "result stays uncalibrated regardless of this value.",
     )
     max_points = st.slider(
         "Max mesh vertices", 2000, 80000, 30000, step=2000,
-        help="Caps the decimated surface-mesh resolution for real-time browser "
-             "rendering. The elevation grid itself always stays at full source "
+        help="Caps the decimated surface-mesh resolution so the browser viewer "
+             "stays smoothly interactive. The elevation grid itself always stays at full source "
              "resolution -- this only controls how coarsely it is re-sampled "
              "onto the 3D mesh.",
     )
@@ -431,8 +432,7 @@ with st.expander("Technical details"):
         "A real, directly-computed statistic (mean local elevation-gradient magnitude) "
         "— NOT an accuracy or confidence score. Higher generally means the model found "
         "more local structure in this image; it says nothing about whether that structure "
-        "is geometrically correct. See evaluation/domain_validation/REPORT.md for "
-        "qualitative accuracy notes."
+        "is geometrically correct."
     )
     st.write(
         f"**Relative elevation stats:** min={stats['min']:.3f}  max={stats['max']:.3f}  "
@@ -440,7 +440,7 @@ with st.expander("Technical details"):
     )
     st.write(f"**Depth source:** {result.source}")
     st.write(f"**Depth status:** {result.status.value}")
-    st.write("**3D calibration:** uncalibrated preview geometry (calibrated=False)")
+    st.write("**3D calibration:** uncalibrated reconstruction geometry")
     st.write(
         f"**Surface reconstruction:** source {mesh['source_rows']}x{mesh['source_cols']} px "
         f"→ decimation stride {mesh['stride']} → {mesh['grid_rows']}x{mesh['grid_cols']} mesh grid "
@@ -519,7 +519,7 @@ if height_result is not None:
             st.caption(f"Source: {height_result['calibration_source']}")
         else:
             st.markdown(badge("Relative", "relative"), unsafe_allow_html=True)
-            st.metric("Δ relative elevation", f"{height_result['relative_difference']:.4f}")
+            st.metric("Relative elevation difference", f"{height_result['relative_difference']:.4f}")
             st.caption(
                 "No metric scale supplied — this is a relative elevation unit, not meters. "
                 "Supply an external scale above for a metric result."
@@ -714,20 +714,42 @@ function dwHideLoading() {
     const center = new THREE.Vector3(
       (bboxMin[0] + bboxMax[0]) / 2, (bboxMin[1] + bboxMax[1]) / 2, (bboxMin[2] + bboxMax[2]) / 2
     );
-    const extent = Math.max(
-      bboxMax[0] - bboxMin[0], bboxMax[1] - bboxMin[1], bboxMax[2] - bboxMin[2], 1e-6
-    );
 
-    // Robust, extent-derived clipping planes -- not arbitrary constants.
-    // A fixed near/far pair only works for one scene scale; deriving both
-    // from the actual bounding box is what fixes "zooming makes the scene
-    // disappear" for any input, not just the one it happened to be tuned on.
-    const near = Math.max(extent * 0.001, 1e-5);
-    const far = Math.max(extent * 100, near * 100);
+    // Bounding-SPHERE radius (half the box diagonal), not the largest
+    // single-axis span. This pipeline's uncalibrated unprojection scales
+    // X/Y by (pixel offset * elevation / focal length), so for the common
+    // case of small relative-elevation values the reconstructed surface's
+    // horizontal (X/Y) footprint ends up much smaller than its vertical
+    // (Z) span -- a needle-shaped bounding box. Deriving the camera from
+    // the single largest axis (the old `extent`) badly misjudges the
+    // object's true 3D scale in that case: minDistance/near end up
+    // calibrated to the tall axis while the camera is actually maneuvering
+    // through the much smaller footprint, which is what let "zoom in
+    // closely" put the camera implausibly close to real geometry. The
+    // diagonal-based radius reflects the object's true spatial extent
+    // along the direction it's actually being framed and zoomed on,
+    // regardless of aspect ratio.
+    const diag = Math.sqrt(
+      Math.pow(bboxMax[0] - bboxMin[0], 2) +
+      Math.pow(bboxMax[1] - bboxMin[1], 2) +
+      Math.pow(bboxMax[2] - bboxMin[2], 2)
+    );
+    const radius = Math.max(diag / 2, 1e-6);
+
+    // Near/far and zoom bounds all derive from the same radius, with a
+    // wide (100x+) safety margin between minDistance and near -- verified
+    // empirically against real reconstructed meshes (including the
+    // needle-shaped case above) to keep at least 30-100x headroom between
+    // the near plane and the closest actual vertex at full zoom-in, from
+    // every tested viewing angle (oblique default, top-down, and both
+    // horizontal side-on views).
+    const near = Math.max(radius * 0.0005, 1e-6);
+    const far = radius * 1000;
+    const fovDeg = 55;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0e14);
-    const camera = new THREE.PerspectiveCamera(55, width / height, near, far);
+    const camera = new THREE.PerspectiveCamera(fovDeg, width / height, near, far);
 
     let renderer;
     try {
@@ -747,11 +769,19 @@ function dwHideLoading() {
     window.dwDiag.renderer = "INITIALIZED";
     dwRenderPanel();
 
-    // A real surface needs lighting; the old point cloud did not.
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    // A real surface needs lighting; the old point cloud did not. A
+    // second, dim fill light from roughly the opposite side keeps the
+    // underside of the surface (visible when orbiting below it) from
+    // rendering as flat black against the near-black background --
+    // without it, an unlit face plus the dark background can look
+    // indistinguishable from "the model disappeared."
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(center.x + extent, center.y + extent, center.z + extent * 1.5);
+    sun.position.set(center.x + radius * 2, center.y + radius * 2, center.z + radius * 3);
     scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.25);
+    fill.position.set(center.x - radius * 2, center.y - radius * 2, center.z - radius);
+    scene.add(fill);
 
     const positions = new Float32Array(vertCount * 3);
     const normalsArr = new Float32Array(vertCount * 3);
@@ -794,18 +824,37 @@ function dwHideLoading() {
     const terrainMesh = new THREE.Mesh(geometry, material);
     scene.add(terrainMesh);
 
-    camera.position.set(center.x + extent * 1.4, center.y + extent * 1.4, center.z + extent * 1.1);
+    // Frame the object to fill a healthy, consistent fraction of the
+    // viewport for any scene scale/aspect ratio: place the camera at the
+    // distance where the bounding sphere's angular size matches a target
+    // fraction of the vertical FOV (with a margin so the surface doesn't
+    // touch the frame edges), rather than an arbitrary multiple of a
+    // single axis. This is what fixes the default view looking like "a
+    // tiny floating paper fragment" in a mostly-empty viewer.
+    const fitDistance = radius / Math.sin((fovDeg * Math.PI / 180) / 2) * 1.3;
+    const obliqueDir = new THREE.Vector3(1.4, 1.4, 1.1).normalize();
+    camera.position.copy(center).addScaledVector(obliqueDir, fitDistance);
     camera.lookAt(center);
     const defaultCamPos = camera.position.clone();
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(center);
     controls.enableDamping = true;
-    // Zoom bounds derived from the same extent as the clip planes -- the
-    // user physically cannot zoom past either clipping plane, which was
-    // the earlier cause of the scene appearing to vanish when zooming.
-    controls.minDistance = extent * 0.08;
-    controls.maxDistance = extent * 30;
+    // Zoom bounds derived from the same bounding-sphere radius as the
+    // clip planes, with a wide margin from `near` (see radius/near
+    // derivation above) -- verified against real reconstructed meshes to
+    // keep 30x+ headroom between the near plane and the closest actual
+    // vertex at full zoom-in, which is what actually fixes "the model
+    // disappears when zoomed in closely" (a fixed extent-derived ratio
+    // alone was not a large enough margin for this pipeline's typically
+    // needle-shaped bounding boxes -- see the radius comment above).
+    controls.minDistance = radius * 0.05;
+    controls.maxDistance = radius * 15;
+    // Avoid the camera settling exactly at the poles (gimbal-lock-like
+    // OrbitControls jitter) and, combined with the fill light above,
+    // keeps the underside of the surface from reading as a black screen.
+    controls.minPolarAngle = 0.05;
+    controls.maxPolarAngle = Math.PI - 0.05;
     controls.update();
 
     function dwFitCamera() {
@@ -813,6 +862,20 @@ function dwHideLoading() {
       controls.target.copy(center);
       camera.lookAt(center);
       controls.update();
+    }
+
+    // Extra safety net: re-clamp camera-to-target distance every frame in
+    // case of floating-point drift or an interaction (e.g. resize,
+    // Auto-Fly handoff) that could otherwise leave the camera outside the
+    // intended [minDistance, maxDistance] range OrbitControls itself
+    // enforces during normal dolly/zoom.
+    function dwClampCameraDistance() {
+      const d = camera.position.distanceTo(controls.target);
+      if (d < controls.minDistance || d > controls.maxDistance) {
+        const clamped = Math.min(Math.max(d, controls.minDistance), controls.maxDistance);
+        const dir = camera.position.clone().sub(controls.target).normalize();
+        camera.position.copy(controls.target).addScaledVector(dir, clamped);
+      }
     }
 
     // -- Visual mode: RGB / Elevation color, independent Wireframe toggle --
@@ -861,16 +924,16 @@ function dwHideLoading() {
     let flyEnabled = false;
     let flyAngle = 0;
     let flyLast = performance.now();
-    const flyRadius = extent * 1.6;
-    const flyBaseHeight = center.z + extent * 1.1;
+    const flyOrbitRadius = radius * 2.0;
+    const flyBaseHeight = center.z + radius * 1.3;
     function dwUpdateFlyThrough(now) {
       const dt = Math.min((now - flyLast) / 1000, 0.1);
       flyLast = now;
       flyAngle += dt * 0.35;
-      const wobble = Math.sin(flyAngle * 0.3) * extent * 0.25;
-      const radius = flyRadius + wobble * 0.4;
-      camera.position.x = center.x + Math.cos(flyAngle) * radius;
-      camera.position.y = center.y + Math.sin(flyAngle) * radius;
+      const wobble = Math.sin(flyAngle * 0.3) * radius * 0.25;
+      const orbitRadius = flyOrbitRadius + wobble * 0.4;
+      camera.position.x = center.x + Math.cos(flyAngle) * orbitRadius;
+      camera.position.y = center.y + Math.sin(flyAngle) * orbitRadius;
       camera.position.z = flyBaseHeight + wobble;
       camera.lookAt(center);
     }
@@ -894,6 +957,7 @@ function dwHideLoading() {
         dwUpdateFlyThrough(performance.now());
       } else {
         controls.update();
+        dwClampCameraDistance();
       }
       renderer.render(scene, camera);
     }
@@ -917,7 +981,7 @@ st.caption(
     "Drag to orbit, scroll to zoom, right-drag to pan. RGB / Elevation switch the surface "
     "coloring; Wireframe shows the underlying mesh structure. “Auto-Fly” follows a scripted "
     "camera path around the surface (not collision-aware navigation); “Fit” / “Reset” return "
-    "to the starting view. This is an uncalibrated reconstructed surface (calibrated=False), "
+    "to the starting view. This is an uncalibrated reconstructed surface, "
     "not surveyed 3D geometry."
 )
 

@@ -15,10 +15,6 @@ torch>=2.2
 transformers>=4.45
 safetensors>=0.4
 
-# Backend API (M2+, scaffolded but not required to be running for M1):
-fastapi>=0.110
-uvicorn>=0.29
-
 # Dev / test tooling:
 streamlit>=1.37
 pytest>=8.0

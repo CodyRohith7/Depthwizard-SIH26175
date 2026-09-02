@@ -3,8 +3,8 @@
 This replaces prototype/app.py. It is a fast internal tool for the team to
 sanity-check the io -> depth pipeline while building, per the Phase 0
 audit's Section 5 recommendation to keep this kind of tool around, clearly
-labeled as a dev tool. The interactive Three.js fly-through
-(frontend/index.html) is the actual competition-facing deliverable.
+labeled as a dev tool. The full pipeline with the interactive 3D viewer
+(app/streamlit_app.py) is the actual competition-facing deliverable.
 
 Run:
     pip install -e ".[dev]"     # installs streamlit (not installed in the
@@ -30,10 +30,9 @@ Sections 3, 4, 6):
     - Image loading goes through depthwizard.io.load_image, so GeoTIFF
       metadata (CRS, transform, bounds) is surfaced when present, instead
       of being silently discarded by a plain PIL open.
-    - The 3D export is gone from this tool. Use
-      scripts/export_sample_scene.py + frontend/index.html for the
-      Three.js viewer instead -- this harness is for depth/metadata
-      inspection only.
+    - The 3D export/viewer is gone from this tool -- this harness is for
+      depth/metadata inspection only. See app/streamlit_app.py for the
+      full pipeline and 3D viewer.
 """
 from __future__ import annotations
 
@@ -70,7 +69,7 @@ st.set_page_config(page_title="DepthWizard (dev harness)", layout="wide")
 st.title("DepthWizard -- developer harness")
 st.caption(
     "Internal dev tool only -- NOT the SIH deliverable. "
-    "See frontend/index.html for the interactive fly-through."
+    "See app/streamlit_app.py for the full pipeline and interactive 3D viewer."
 )
 if not rasterio_available():
     st.warning(
