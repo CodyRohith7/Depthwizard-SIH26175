@@ -36,11 +36,9 @@ class TestM1Integration(unittest.TestCase):
             self.assertFalse(meta.is_georeferenced)
             self.assertEqual(image.shape, (40, 60, 3))
 
-            # 2. /depth: explicit fallback, because no real backend is
-            #    available here. THIS IS THE FALLBACK PATH, NOT A REAL
-            #    PREDICTION -- asserted below, not just claimed.
+            # 2. /depth: explicit fallback path -- asserted below, not just claimed.
             predictor = DepthPredictor()
-            depth_result = predictor.predict(image, allow_fallback=True)
+            depth_result = predictor.predict_fallback_only(image)
             self.assertEqual(depth_result.status, DepthStatus.DEMO_FALLBACK)
             self.assertEqual(depth_result.source, "DEMO_FALLBACK")
             print(
